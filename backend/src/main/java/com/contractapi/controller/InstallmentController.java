@@ -16,28 +16,28 @@ public class InstallmentController {
   public InstallmentController(InstallmentService service) { this.service = service; }
 
   @PostMapping
-  public List<InstallmentView> registerPlan(@PathVariable Long contractId, @RequestBody InstallmentPlanRequest request) {
+  public List<InstallmentView> registerPlan(@PathVariable("contractId") Long contractId, @RequestBody InstallmentPlanRequest request) {
     return service.registerPlan(contractId, request);
   }
 
   @GetMapping
-  public List<InstallmentView> list(@PathVariable Long contractId) {
+  public List<InstallmentView> list(@PathVariable("contractId") Long contractId) {
     return service.listInstallments(contractId);
   }
 
   @PostMapping("/{installmentId}/payments")
-  public InstallmentView recordPayment(@PathVariable Long contractId, @PathVariable Long installmentId,
+  public InstallmentView recordPayment(@PathVariable("contractId") Long contractId, @PathVariable("installmentId") Long installmentId,
       @RequestBody PaymentRequest request) {
     return service.recordPayment(contractId, installmentId, request);
   }
 
   @GetMapping("/progress")
-  public PaymentProgressView progress(@PathVariable Long contractId) {
+  public PaymentProgressView progress(@PathVariable("contractId") Long contractId) {
     return service.getProgress(contractId);
   }
 
   @GetMapping("/overdue")
-  public OverdueView overdue(@PathVariable Long contractId) {
+  public OverdueView overdue(@PathVariable("contractId") Long contractId) {
     return service.getOverdue(contractId);
   }
 }

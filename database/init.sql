@@ -24,11 +24,6 @@ CREATE TABLE IF NOT EXISTS installment_payments (
   KEY idx_installment (installment_id)
 );
 
--- 兼容已有数据库：contracts 缺少 amount 列时补齐（重复执行安全）
-SET @has_amount := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'contracts' AND COLUMN_NAME = 'amount');
-SET @alter_amount := IF(@has_amount = 0, 'ALTER TABLE contracts ADD COLUMN amount DECIMAL(15,2) NULL AFTER content', 'SELECT 1');
-PREPARE stmt_amount FROM @alter_amount;
-EXECUTE stmt_amount;
-DEALLOCATE PREPARE stmt_amount;
+-- 已有数据库的 contracts.amount 兼容处理由后端 SchemaInitializer 在启动时幂等完成。
 
 INSERT INTO legal_faq(category, question, answer) VALUES ('合同纠纷','合同逾期未签署怎么办','可先发出书面催告并保存沟通证据。') ON DUPLICATE KEY UPDATE question=question;
