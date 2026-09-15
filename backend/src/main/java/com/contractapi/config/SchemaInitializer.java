@@ -8,8 +8,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 /**
- * 启动时保证分期收款相关表结构存在：
- * 已有数据卷不会重跑 init.sql，这里幂等补齐，保证重启后分期与收款记录可读写。
+ * 启动时保证应用所需表结构存在：
+ * 已有数据卷不会重跑 init.sql，这里幂等建表/补列，保证合同与分期收款记录可读写。
  */
 @Component
 public class SchemaInitializer implements ApplicationRunner {
@@ -22,6 +22,19 @@ public class SchemaInitializer implements ApplicationRunner {
 
   @Override
   public void run(ApplicationArguments args) {
+    jdbcTemplate.execute("""
+        CREATE TABLE IF NOT EXISTS contracts (
+          id BIGINT PRIMARY KEY AUTO_INCREMENT,
+          user_id BIGINT,
+          template_id BIGINT,
+          title VARCHAR(120),
+          content MEDIUMTEXT,
+          amount DECIMAL(15,2),
+          status VARCHAR(32),
+          signed_at DATETIME,
+          signers JSON
+        )
+        """);
     jdbcTemplate.execute("""
         CREATE TABLE IF NOT EXISTS contract_installments (
           id BIGINT PRIMARY KEY AUTO_INCREMENT,

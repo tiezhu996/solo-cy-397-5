@@ -24,6 +24,17 @@ cd backend
 mvn spring-boot:run
 ```
 
+## 运行测试
+
+分期收款模块集成测试位于 `backend/src/test/java/com/contractapi/InstallmentApiIntegrationTest.java`，通过 Testcontainers 启动独立的 MySQL 8.0 容器，需要本机 Docker 可用：
+
+```bash
+cd backend
+mvn test
+```
+
+覆盖正常登记与逐期收款、金额合计不符、期数重复、超额收款、草稿/已过期拒绝、空计划、逾期三类期数区分、跨合同操作拒绝等场景。每个用例自建并清理数据，连续运行结果一致。
+
 ## 技术栈
 
 | 类型 | 技术 |
