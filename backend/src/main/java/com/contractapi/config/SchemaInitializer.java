@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.core.annotation.Order;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
@@ -12,6 +13,7 @@ import org.springframework.stereotype.Component;
  * 已有数据卷不会重跑 init.sql，这里幂等建表/补列，保证合同与分期收款记录可读写。
  */
 @Component
+@Order(1)
 public class SchemaInitializer implements ApplicationRunner {
   private static final Logger log = LoggerFactory.getLogger(SchemaInitializer.class);
   private final JdbcTemplate jdbcTemplate;

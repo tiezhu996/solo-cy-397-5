@@ -1,5 +1,6 @@
 package com.contractapi.service;
 
+import java.math.RoundingMode;
 import java.util.List;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.contractapi.constants.ContractStatus;
@@ -31,7 +32,10 @@ public class ContractService {
     contract.setTemplateId(template.getId());
     contract.setTitle(request.title());
     contract.setContent(renderer.render(template.getContent(), request.variables()));
-    contract.setAmount(request.amount());
+    if (request.amount() != null) {
+      // 合同金额同样归一到分，保证与分期合计可精确对账
+      contract.setAmount(request.amount().setScale(2, RoundingMode.HALF_UP));
+    }
     contract.setStatus(ContractStatus.DRAFT.name());
     contract.setSigners("[]");
     contractMapper.insert(contract);

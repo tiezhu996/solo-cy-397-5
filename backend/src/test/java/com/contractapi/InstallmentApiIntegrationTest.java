@@ -213,6 +213,71 @@ class InstallmentApiIntegrationTest {
         .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
   }
 
+  // ---------- 金额精度 ----------
+
+  @Test
+  void recordPaymentThreeDecimalsSettlesWhenFull() throws Exception {
+    long contractId = newContract(ContractStatus.SIGNED, "100.00");
+    JsonNode plan = registerPlanOk(contractId, List.of(item(1, LocalDate.now().plusDays(5), "100.00")));
+    long installmentId = plan.get(0).get("id").asLong();
+
+    // 99.999 按存储精度入为 100.00，收满即结清：已收、剩余、状态三者一致
+    JsonNode pay = payOk(contractId, installmentId, "99.999");
+    assertEquals("SETTLED", pay.get("status").asText());
+    assertMoney(pay, "receivedAmount", "100.00");
+    assertMoney(pay, "remainingAmount", "0.00");
+
+    JsonNode installments = getJson("/api/contracts/{cid}/installments", contractId);
+    assertEquals("SETTLED", installments.get(0).get("status").asText());
+    assertMoney(installments.get(0), "receivedAmount", "100.00");
+    assertMoney(installments.get(0), "remainingAmount", "0.00");
+
+    JsonNode progress = getJson("/api/contracts/{cid}/installments/progress", contractId);
+    assertMoney(progress, "totalReceived", "100.00");
+    assertMoney(progress, "totalRemaining", "0.00");
+    assertEquals(1, progress.get("settledCount").asInt());
+  }
+
+  @Test
+  void recordPaymentThreeDecimalsRoundsDownStaysPartial() throws Exception {
+    long contractId = newContract(ContractStatus.SIGNED, "100.00");
+    JsonNode plan = registerPlanOk(contractId, List.of(item(1, LocalDate.now().plusDays(5), "100.00")));
+    long installmentId = plan.get(0).get("id").asLong();
+
+    // 33.333 向下入为 33.33，未收满保持部分收款
+    JsonNode pay = payOk(contractId, installmentId, "33.333");
+    assertEquals("PARTIAL", pay.get("status").asText());
+    assertMoney(pay, "receivedAmount", "33.33");
+    assertMoney(pay, "remainingAmount", "66.67");
+
+    JsonNode progress = getJson("/api/contracts/{cid}/installments/progress", contractId);
+    assertMoney(progress, "totalReceived", "33.33");
+    assertMoney(progress, "totalRemaining", "66.67");
+    assertEquals(0, progress.get("settledCount").asInt());
+  }
+
+  @Test
+  void registerPlanRoundsItemAmountsToStoragePrecision() throws Exception {
+    long contractId = newContract(ContractStatus.SIGNED, "100.00");
+
+    // 33.333 + 66.667 归一后为 33.33 + 66.67 = 100.00，与合同金额一致
+    JsonNode plan = registerPlanOk(contractId, List.of(
+        item(1, LocalDate.now().plusDays(5), "33.333"),
+        item(2, LocalDate.now().plusDays(10), "66.667")));
+    assertEquals(2, plan.size());
+    assertMoney(plan.get(0), "amount", "33.33");
+    assertMoney(plan.get(1), "amount", "66.67");
+
+    long inst1 = plan.get(0).get("id").asLong();
+    JsonNode pay = payOk(contractId, inst1, "33.33");
+    assertEquals("SETTLED", pay.get("status").asText());
+
+    JsonNode progress = getJson("/api/contracts/{cid}/installments/progress", contractId);
+    assertMoney(progress, "totalReceived", "33.33");
+    assertMoney(progress, "totalRemaining", "66.67");
+    assertEquals(1, progress.get("settledCount").asInt());
+  }
+
   // ---------- 逾期统计 ----------
 
   @Test

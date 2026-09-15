@@ -1,7 +1,9 @@
 package com.contractapi.service;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
@@ -56,6 +58,7 @@ public class InstallmentService {
     }
     Set<Integer> seenPeriods = new HashSet<>();
     BigDecimal sum = BigDecimal.ZERO;
+    List<InstallmentPlanRequest.InstallmentItem> normalizedItems = new ArrayList<>();
     for (InstallmentPlanRequest.InstallmentItem item : items) {
       if (item.periodNo() == null || item.periodNo() <= 0) {
         throw new ApiException(ErrorCode.VALIDATION_FAILED, "期数必须为正整数");
@@ -66,10 +69,16 @@ public class InstallmentService {
       if (item.dueDate() == null) {
         throw new ApiException(ErrorCode.VALIDATION_FAILED, "第 " + item.periodNo() + " 期应收日期不能为空");
       }
-      if (item.amount() == null || item.amount().signum() <= 0) {
+      if (item.amount() == null) {
+        throw new ApiException(ErrorCode.VALIDATION_FAILED, "第 " + item.periodNo() + " 期金额不能为空");
+      }
+      // 金额统一归一到分（两位小数），与 DECIMAL(15,2) 存储精度一致，避免入账后账目对不上
+      BigDecimal amount = item.amount().setScale(2, RoundingMode.HALF_UP);
+      if (amount.signum() <= 0) {
         throw new ApiException(ErrorCode.VALIDATION_FAILED, "第 " + item.periodNo() + " 期金额必须大于 0");
       }
-      sum = sum.add(item.amount());
+      sum = sum.add(amount);
+      normalizedItems.add(new InstallmentPlanRequest.InstallmentItem(item.periodNo(), item.dueDate(), amount));
     }
     if (sum.compareTo(contract.getAmount()) != 0) {
       throw new ApiException(ErrorCode.AMOUNT_MISMATCH,
@@ -79,7 +88,7 @@ public class InstallmentService {
     if (existing != null && existing > 0) {
       throw new ApiException(ErrorCode.PLAN_ALREADY_EXISTS, "该合同已存在分期计划，不允许重复登记");
     }
-    List<InstallmentPlanRequest.InstallmentItem> sorted = items.stream()
+    List<InstallmentPlanRequest.InstallmentItem> sorted = normalizedItems.stream()
         .sorted(Comparator.comparing(InstallmentPlanRequest.InstallmentItem::periodNo)).toList();
     for (InstallmentPlanRequest.InstallmentItem item : sorted) {
       ContractInstallment installment = new ContractInstallment();
@@ -101,28 +110,33 @@ public class InstallmentService {
     if (installment == null || !installment.getContractId().equals(contractId)) {
       throw new ApiException(ErrorCode.NOT_FOUND, "分期不存在: " + installmentId);
     }
-    if (request == null || request.amount() == null || request.amount().signum() <= 0) {
-      throw new ApiException(ErrorCode.VALIDATION_FAILED, "收款金额必须大于 0");
+    if (request == null || request.amount() == null) {
+      throw new ApiException(ErrorCode.VALIDATION_FAILED, "收款金额不能为空");
     }
     if (request.receivedDate() == null) {
       throw new ApiException(ErrorCode.VALIDATION_FAILED, "实收日期不能为空");
     }
+    // 先归一到分（两位小数）再做校验与累加，保证计算值与 DECIMAL(15,2) 存储值一致
+    BigDecimal amount = request.amount().setScale(2, RoundingMode.HALF_UP);
+    if (amount.signum() <= 0) {
+      throw new ApiException(ErrorCode.VALIDATION_FAILED, "收款金额必须大于 0");
+    }
     BigDecimal received = installment.getReceivedAmount() == null ? BigDecimal.ZERO : installment.getReceivedAmount();
     BigDecimal remaining = installment.getAmount().subtract(received);
-    if (request.amount().compareTo(remaining) > 0) {
+    if (amount.compareTo(remaining) > 0) {
       throw new ApiException(ErrorCode.PAYMENT_EXCEEDS_DUE,
           "第 " + installment.getPeriodNo() + " 期剩余应收 " + remaining.toPlainString()
-              + "，本次收款 " + request.amount().toPlainString() + " 超出应收金额");
+              + "，本次收款 " + amount.toPlainString() + " 超出应收金额");
     }
     InstallmentPayment payment = new InstallmentPayment();
     payment.setInstallmentId(installmentId);
     payment.setReceivedDate(request.receivedDate());
-    payment.setAmount(request.amount());
+    payment.setAmount(amount);
     paymentMapper.insert(payment);
 
-    BigDecimal newReceived = received.add(request.amount());
+    BigDecimal newReceived = received.add(amount);
     installment.setReceivedAmount(newReceived);
-    installment.setStatus(newReceived.compareTo(installment.getAmount()) == 0
+    installment.setStatus(newReceived.compareTo(installment.getAmount()) >= 0
         ? InstallmentStatus.SETTLED.name() : InstallmentStatus.PARTIAL.name());
     installmentMapper.updateById(installment);
     return toView(installment);
