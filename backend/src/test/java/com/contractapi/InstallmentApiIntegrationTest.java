@@ -213,6 +213,26 @@ class InstallmentApiIntegrationTest {
         .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
   }
 
+  @Test
+  void recordPaymentExactlyRemainingSettles() throws Exception {
+    long contractId = newContract(ContractStatus.SIGNED, "100.00");
+    JsonNode plan = registerPlanOk(contractId, List.of(item(1, LocalDate.now().plusDays(5), "100.00")));
+    long installmentId = plan.get(0).get("id").asLong();
+
+    payOk(contractId, installmentId, "60.00");
+
+    // 恰好等于剩余金额：应判结清而不是超额
+    JsonNode pay = payOk(contractId, installmentId, "40.00");
+    assertEquals("SETTLED", pay.get("status").asText());
+    assertMoney(pay, "receivedAmount", "100.00");
+    assertMoney(pay, "remainingAmount", "0.00");
+
+    JsonNode progress = getJson("/api/contracts/{cid}/installments/progress", contractId);
+    assertEquals(1, progress.get("settledCount").asInt());
+    assertMoney(progress, "totalReceived", "100.00");
+    assertMoney(progress, "totalRemaining", "0.00");
+  }
+
   // ---------- 金额精度 ----------
 
   @Test
@@ -278,6 +298,50 @@ class InstallmentApiIntegrationTest {
     assertEquals(1, progress.get("settledCount").asInt());
   }
 
+  @Test
+  void recordPaymentThirdDecimalFourRoundsDown() throws Exception {
+    long contractId = newContract(ContractStatus.SIGNED, "100.00");
+    JsonNode plan = registerPlanOk(contractId, List.of(item(1, LocalDate.now().plusDays(5), "100.00")));
+    long installmentId = plan.get(0).get("id").asLong();
+
+    // 第三位小数为 4：舍去，33.334 → 33.33
+    JsonNode pay = payOk(contractId, installmentId, "33.334");
+    assertEquals("PARTIAL", pay.get("status").asText());
+    assertMoney(pay, "receivedAmount", "33.33");
+    assertMoney(pay, "remainingAmount", "66.67");
+  }
+
+  @Test
+  void recordPaymentThirdDecimalFiveRoundsUp() throws Exception {
+    long contractId = newContract(ContractStatus.SIGNED, "100.00");
+    JsonNode plan = registerPlanOk(contractId, List.of(item(1, LocalDate.now().plusDays(5), "100.00")));
+    long installmentId = plan.get(0).get("id").asLong();
+
+    // 第三位小数为 5：进位，33.335 → 33.34
+    JsonNode pay = payOk(contractId, installmentId, "33.335");
+    assertEquals("PARTIAL", pay.get("status").asText());
+    assertMoney(pay, "receivedAmount", "33.34");
+    assertMoney(pay, "remainingAmount", "66.66");
+  }
+
+  @Test
+  void registerPlanItemRoundingChangesSum() throws Exception {
+    long contractId = newContract(ContractStatus.SIGNED, "100.00");
+
+    // 原始合计 33.333+33.333+33.334 = 100.000 与合同金额相等，
+    // 但各期先进位到分后 33.33+33.33+33.33 = 99.99，与合同金额不符，应拒绝且不落库
+    postPlan(contractId, List.of(
+        item(1, LocalDate.now().plusDays(5), "33.333"),
+        item(2, LocalDate.now().plusDays(10), "33.333"),
+        item(3, LocalDate.now().plusDays(15), "33.334")))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.success").value(false))
+        .andExpect(jsonPath("$.code").value("AMOUNT_MISMATCH"));
+
+    JsonNode installments = getJson("/api/contracts/{cid}/installments", contractId);
+    assertEquals(0, installments.size());
+  }
+
   // ---------- 逾期统计 ----------
 
   @Test
@@ -315,6 +379,33 @@ class InstallmentApiIntegrationTest {
     assertEquals(3, progress.get("installmentCount").asInt());
     assertMoney(progress, "totalReceived", "150.00");
     assertMoney(progress, "totalRemaining", "450.00");
+  }
+
+  @Test
+  void overdueBoundaryDueTodayIsNotOverdue() throws Exception {
+    long contractId = newContract(ContractStatus.SIGNED, "300.00");
+    LocalDate today = LocalDate.now();
+
+    JsonNode plan = registerPlanOk(contractId, List.of(
+        item(1, today.minusDays(1), "100.00"),
+        item(2, today, "100.00"),
+        item(3, today.plusDays(1), "100.00")));
+    assertEquals(3, plan.size());
+
+    // 应收日期当天不算逾期，前一天才算，后一天也不算
+    JsonNode installments = getJson("/api/contracts/{cid}/installments", contractId);
+    assertTrue(installments.get(0).get("overdue").asBoolean());
+    assertFalse(installments.get(1).get("overdue").asBoolean());
+    assertFalse(installments.get(2).get("overdue").asBoolean());
+
+    JsonNode overdue = getJson("/api/contracts/{cid}/installments/overdue", contractId);
+    assertEquals(1, overdue.get("overdueCount").asInt());
+    assertMoney(overdue, "overdueAmount", "100.00");
+    assertEquals(1, overdue.get("overdueInstallments").size());
+    assertEquals(1, overdue.get("overdueInstallments").get(0).get("periodNo").asInt());
+
+    JsonNode progress = getJson("/api/contracts/{cid}/installments/progress", contractId);
+    assertEquals(1, progress.get("overdueCount").asInt());
   }
 
   // ---------- 跨合同操作 ----------
